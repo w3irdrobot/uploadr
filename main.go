@@ -11,6 +11,7 @@ import (
 )
 
 func main() {
+	logrus.SetLevel(logrus.DebugLevel)
 	// create directory to hold uploads
 	err := os.MkdirAll("./uploads", os.ModePerm)
 	if err != nil {

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	"github.com/sirupsen/logrus"
 )
 
 func checkSignature(publickey, signature string, contents []byte) (bool, error) {
@@ -28,5 +30,13 @@ func checkSignature(publickey, signature string, contents []byte) (bool, error) 
 		return false, fmt.Errorf("failed to parse signature: %w", err)
 	}
 
-	return sig.Verify(contents[:], pubkey), nil
+	shasum := sha256.Sum256(contents)
+
+	logrus.WithFields(logrus.Fields{
+		"fileShasum": hex.EncodeToString(shasum[:]),
+		"pubkey":     publickey,
+		"signature":  signature,
+	}).Debug("checking signature")
+
+	return sig.Verify(shasum[:], pubkey), nil
 }

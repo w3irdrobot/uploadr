@@ -2,13 +2,22 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+
+	"github.com/sirupsen/logrus"
 )
 
 const MAX_UPLOAD_SIZE = 5 * 1024 * 1024 // 5MB
+
+type response struct {
+	Name string `json:"name"`
+	Url  string `json:"url"`
+}
 
 func upload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -24,7 +33,8 @@ func upload(w http.ResponseWriter, r *http.Request) {
 
 	file, fileHeader, err := r.FormFile("file")
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		logrus.WithError(err).Error("error getting file from request")
+		http.Error(w, "file not found in request", http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
@@ -32,7 +42,8 @@ func upload(w http.ResponseWriter, r *http.Request) {
 	// make buffer used to detect content type
 	buff := make([]byte, 512)
 	if _, err := file.Read(buff); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logrus.WithError(err).Error("error reading 512 bytes from file in request")
+		http.Error(w, "unable to read file for mime detection", http.StatusInternalServerError)
 		return
 	}
 
@@ -44,23 +55,27 @@ func upload(w http.ResponseWriter, r *http.Request) {
 
 	// seek back to beginning to get whole file
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logrus.WithError(err).Error("error seeking to beging of file")
+		http.Error(w, "unable to process the file", http.StatusInternalServerError)
 		return
 	}
 
 	// check signature
 	var buf bytes.Buffer
 	if _, err := io.Copy(&buf, file); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logrus.WithError(err).Error("error reading file from request into buffer")
+		http.Error(w, "unable to read file", http.StatusInternalServerError)
 		return
 	}
 
 	pubkey := r.FormValue("pubkey")
 	signature := r.FormValue("signature")
+	logrus.WithFields(logrus.Fields{"pubkey": pubkey, "signature": signature}).Debug("form values")
 
 	validSig, err := checkSignature(pubkey, signature, buf.Bytes())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logrus.WithError(err).Error("error checking the signature")
+		http.Error(w, "error checking signature", http.StatusBadRequest)
 		return
 	}
 	if !validSig {
@@ -71,15 +86,31 @@ func upload(w http.ResponseWriter, r *http.Request) {
 	// save file to the filesystem
 	dst, err := os.Create(filepath.Join(".", "uploads", fileHeader.Filename))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logrus.WithError(err).Error("error opening the file on filesystem")
+		http.Error(w, "error opening the file on filesystem", http.StatusInternalServerError)
 		return
 	}
 	defer dst.Close()
 
 	if _, err = io.Copy(dst, &buf); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logrus.WithError(err).Error("error copying the file to filesystem")
+		http.Error(w, "error copying the file to filesystem", http.StatusInternalServerError)
 		return
 	}
 
-	// TODO: return json object of file name and url
+	url := url.URL{
+		Scheme: "https",
+		Host:   "localhost:8080",
+		Path:   fileHeader.Filename,
+	}
+	res := response{
+		Name: fileHeader.Filename,
+		Url:  url.String(),
+	}
+
+	if err := json.NewEncoder(w).Encode(res); err != nil {
+		logrus.WithError(err).Error("error encoding response")
+		http.Error(w, "error encoding response", http.StatusInternalServerError)
+		return
+	}
 }
