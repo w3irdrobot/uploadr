@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"os"
@@ -47,6 +48,27 @@ func upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// check signature
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, file); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	pubkey := r.FormValue("pubkey")
+	signature := r.FormValue("signature")
+
+	validSig, err := checkSignature(pubkey, signature, buf.Bytes())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !validSig {
+		http.Error(w, "invalid signature", http.StatusUnauthorized)
+		return
+	}
+
+	// save file to the filesystem
 	dst, err := os.Create(filepath.Join(".", "uploads", fileHeader.Filename))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -54,9 +76,10 @@ func upload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer dst.Close()
 
-	_, err = io.Copy(dst, file)
-	if err != nil {
+	if _, err = io.Copy(dst, &buf); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	// TODO: return json object of file name and url
 }
