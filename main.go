@@ -11,8 +11,15 @@ import (
 )
 
 func main() {
-	logger := logrus.New()
+	// create directory to hold uploads
+	err := os.MkdirAll("./uploads", os.ModePerm)
+	if err != nil {
+		logrus.WithError(err).Fatal("unable to create the upload directory")
+		return
+	}
+
 	router := http.NewServeMux()
+	router.HandleFunc("/upload", upload)
 	server := http.Server{
 		Addr:    ":8080",
 		Handler: router,
@@ -29,18 +36,18 @@ func main() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := server.Shutdown(ctx); err != nil {
-			logger.WithError(err).Fatal("graceful shutdown failed")
+			logrus.WithError(err).Fatal("graceful shutdown failed")
 		}
 		close(shutdownComplete)
 	}()
 
-	logger.Info("server started on :8080")
+	logrus.Info("server started on :8080")
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
-		logger.WithError(err).Fatal("server unable to start")
+		logrus.WithError(err).Fatal("server unable to start")
 	}
-	logger.Info("server exiting")
+	logrus.Info("server exiting")
 
 	<-shutdownComplete
 
-	logger.Info("server gracefully shut down")
+	logrus.Info("server gracefully shut down")
 }
