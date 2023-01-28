@@ -2,7 +2,10 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -67,12 +70,13 @@ func upload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unable to read file", http.StatusInternalServerError)
 		return
 	}
+	shasum := sha256.Sum256(buf.Bytes())
 
 	pubkey := r.FormValue("pubkey")
 	signature := r.FormValue("signature")
 	logrus.WithFields(logrus.Fields{"pubkey": pubkey, "signature": signature}).Debug("form values")
 
-	validSig, err := checkSignature(pubkey, signature, buf.Bytes())
+	validSig, err := checkSignature(pubkey, signature, shasum[:])
 	if err != nil {
 		logrus.WithError(err).Error("error checking the signature")
 		http.Error(w, "error checking signature", http.StatusBadRequest)
@@ -83,8 +87,28 @@ func upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// create directory path to put file
+	directory := createAndGetDirectory(shasum[:])
+	fullDirectory := filepath.Join("uploads", directory)
+	if err := os.MkdirAll(fullDirectory, os.ModePerm); err != nil {
+		logrus.WithError(err).Error("error creating the directory on filesystem")
+		http.Error(w, "error preparing the file", http.StatusInternalServerError)
+		return
+	}
+
+	// get name and paths to file
+	extension := filepath.Ext(fileHeader.Filename)
+	name := fmt.Sprintf("%s%s", hex.EncodeToString(shasum[:]), extension)
+	path := filepath.Join(directory, name)
+	fullPath, err := filepath.Abs(filepath.Join(fullDirectory, name))
+	if err != nil {
+		logrus.WithError(err).Error("error calculating the local path on filesystem")
+		http.Error(w, "error opening the file on filesystem", http.StatusInternalServerError)
+		return
+	}
+
 	// save file to the filesystem
-	dst, err := os.Create(filepath.Join(".", "uploads", fileHeader.Filename))
+	dst, err := os.Create(fullPath)
 	if err != nil {
 		logrus.WithError(err).Error("error opening the file on filesystem")
 		http.Error(w, "error opening the file on filesystem", http.StatusInternalServerError)
@@ -98,10 +122,11 @@ func upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// respond with file data
 	url := url.URL{
-		Scheme: "https",
+		Scheme: "http",
 		Host:   "localhost:8080",
-		Path:   fileHeader.Filename,
+		Path:   path,
 	}
 	res := response{
 		Name: fileHeader.Filename,

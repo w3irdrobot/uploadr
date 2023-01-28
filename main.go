@@ -13,8 +13,7 @@ import (
 func main() {
 	logrus.SetLevel(logrus.DebugLevel)
 	// create directory to hold uploads
-	err := os.MkdirAll("./uploads", os.ModePerm)
-	if err != nil {
+	if err := os.MkdirAll("./uploads", os.ModePerm); err != nil {
 		logrus.WithError(err).Fatal("unable to create the upload directory")
 		return
 	}
