@@ -10,8 +10,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/sirupsen/logrus"
 )
 
@@ -24,11 +27,6 @@ type response struct {
 
 func upload(baseDir, domain string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
 		r.Body = http.MaxBytesReader(w, r.Body, MAX_UPLOAD_SIZE)
 		if err := r.ParseMultipartForm(MAX_UPLOAD_SIZE); err != nil {
 			http.Error(w, "file too big. must be under 5MB", http.StatusBadRequest)
@@ -100,7 +98,7 @@ func upload(baseDir, domain string) http.HandlerFunc {
 		// get name and paths to file
 		extension := filepath.Ext(fileHeader.Filename)
 		name := fmt.Sprintf("%s%s", hex.EncodeToString(shasum[:]), extension)
-		path := filepath.Join(directory, name)
+		filePath := filepath.Join(directory, name)
 		fullPath, err := filepath.Abs(filepath.Join(fullDirectory, name))
 		if err != nil {
 			logrus.WithError(err).Error("error calculating the local path on filesystem")
@@ -125,7 +123,7 @@ func upload(baseDir, domain string) http.HandlerFunc {
 
 		// respond with file data
 		url, _ := url.Parse(domain) // checked on startup
-		url.Path = path
+		url.Path = path.Join("static", filePath)
 		res := response{
 			Name: fileHeader.Filename,
 			Url:  url.String(),
@@ -137,4 +135,23 @@ func upload(baseDir, domain string) http.HandlerFunc {
 			return
 		}
 	}
+}
+
+func fileServer(r chi.Router, path string, root http.FileSystem) {
+	if strings.ContainsAny(path, "{}*") {
+		panic("FileServer does not permit any URL parameters.")
+	}
+
+	if path != "/" && path[len(path)-1] != '/' {
+		r.Get(path, http.RedirectHandler(path+"/", 301).ServeHTTP)
+		path += "/"
+	}
+	path += "*"
+
+	r.Get(path, func(w http.ResponseWriter, r *http.Request) {
+		rctx := chi.RouteContext(r.Context())
+		pathPrefix := strings.TrimSuffix(rctx.RoutePattern(), "/*")
+		fs := http.StripPrefix(pathPrefix, http.FileServer(root))
+		fs.ServeHTTP(w, r)
+	})
 }

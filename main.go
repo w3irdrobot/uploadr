@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/sirupsen/logrus"
 	flag "github.com/spf13/pflag"
 )
@@ -57,8 +59,15 @@ func main() {
 		logrus.WithError(err).Fatal("unable to create the upload directory")
 	}
 
-	router := http.NewServeMux()
-	router.HandleFunc("/upload", upload(config.String("dir"), config.String("domain")))
+	router := chi.NewRouter()
+	router.Use(middleware.RequestID)
+	router.Use(middleware.RealIP)
+	router.Use(middleware.CleanPath)
+	router.Use(middleware.Logger)
+	router.Use(middleware.Recoverer)
+	router.Post("/upload", upload(dir, domain))
+	fileServer(router, "/static", http.Dir(dir))
+
 	host := fmt.Sprintf("%s:%d", config.String("host"), config.Int("port"))
 	server := http.Server{
 		Addr:    host,
