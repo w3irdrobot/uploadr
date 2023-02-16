@@ -16,7 +16,7 @@ func checkSignature(publickey, signature string, contents []byte) (bool, error) 
 
 	pubkey, err := schnorr.ParsePubKey(pk)
 	if err != nil {
-		return false, fmt.Errorf("event has invalid pubkey '%s': %w", pubkey, err)
+		return false, fmt.Errorf("event has invalid pubkey '%s': %w", publickey, err)
 	}
 
 	s, err := hex.DecodeString(signature)

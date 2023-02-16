@@ -29,7 +29,9 @@ func main() {
 	f.String("domain", "", "domain files are served from")
 	f.String("log-level", "info", "level of logs to output")
 	f.StringSlice("pubkey", []string{}, "pubkey to whitelist for uploading files")
-	f.Parse(os.Args[1:])
+	if err := f.Parse(os.Args[1:]); err != nil {
+		logrus.WithError(err).Fatal("error parsing flags")
+	}
 
 	config, err := getConfiguration(f)
 	if err != nil {
