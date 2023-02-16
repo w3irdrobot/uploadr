@@ -25,7 +25,7 @@ type response struct {
 	Url  string `json:"url"`
 }
 
-func upload(baseDir, domain string) http.HandlerFunc {
+func upload(baseDir, domain string, pubkeys []string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, MAX_UPLOAD_SIZE)
 		if err := r.ParseMultipartForm(MAX_UPLOAD_SIZE); err != nil {
@@ -74,6 +74,11 @@ func upload(baseDir, domain string) http.HandlerFunc {
 		pubkey := r.FormValue("pubkey")
 		signature := r.FormValue("signature")
 		logrus.WithFields(logrus.Fields{"pubkey": pubkey, "signature": signature}).Debug("form values")
+
+		if len(pubkeys) > 0 && !pubkeyIsApproved(pubkey, pubkeys) {
+			http.Error(w, "pubkey not approved", http.StatusUnauthorized)
+			return
+		}
 
 		validSig, err := checkSignature(pubkey, signature, shasum[:])
 		if err != nil {
@@ -154,4 +159,13 @@ func fileServer(r chi.Router, path string, root http.FileSystem) {
 		fs := http.StripPrefix(pathPrefix, http.FileServer(root))
 		fs.ServeHTTP(w, r)
 	})
+}
+
+func pubkeyIsApproved(pubkey string, pubkeys []string) bool {
+	for _, pk := range pubkeys {
+		if pk == pubkey {
+			return true
+		}
+	}
+	return false
 }

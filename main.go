@@ -28,6 +28,7 @@ func main() {
 	f.String("dir", "./uploads", "directory to upload and serve files from")
 	f.String("domain", "", "domain files are served from")
 	f.String("log-level", "info", "level of logs to output")
+	f.StringSlice("pubkey", []string{}, "pubkey to whitelist for uploading files")
 	f.Parse(os.Args[1:])
 
 	config, err := getConfiguration(f)
@@ -65,7 +66,7 @@ func main() {
 	router.Use(middleware.CleanPath)
 	router.Use(middleware.Logger)
 	router.Use(middleware.Recoverer)
-	router.Post("/upload", upload(dir, domain))
+	router.Post("/upload", upload(dir, domain, config.Strings("pubkey")))
 	fileServer(router, "/static", http.Dir(dir))
 
 	host := fmt.Sprintf("%s:%d", config.String("host"), config.Int("port"))
