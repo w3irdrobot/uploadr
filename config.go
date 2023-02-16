@@ -13,7 +13,7 @@ import (
 func getConfiguration(f *flag.FlagSet) (*koanf.Koanf, error) {
 	k := koanf.New(".")
 
-	cFiles, _ := f.GetStringSlice("conf")
+	cFiles, _ := f.GetStringSlice("config")
 	for _, c := range cFiles {
 		if err := k.Load(file.Provider(c), toml.Parser()); err != nil {
 			return nil, fmt.Errorf("error loading file: %w", err)
