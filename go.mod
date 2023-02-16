@@ -1,6 +1,6 @@
 module nakamoto.codes/w3irdrobot/uploadr
 
-go 1.19
+go 1.20
 
 require (
 	github.com/btcsuite/btcd/btcec/v2 v2.3.2
