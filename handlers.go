@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -27,38 +29,18 @@ type response struct {
 
 func upload(baseDir, domain string, pubkeys []string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, MAX_UPLOAD_SIZE)
-		if err := r.ParseMultipartForm(MAX_UPLOAD_SIZE); err != nil {
-			http.Error(w, "file too big. must be under 5MB", http.StatusBadRequest)
-			return
-		}
-
-		file, fileHeader, err := r.FormFile("file")
+		file, fileHeader, err := getFileFromRequestBody(w, r)
 		if err != nil {
-			logrus.WithError(err).Error("error getting file from request")
-			http.Error(w, "file not found in request", http.StatusBadRequest)
-			return
-		}
-		defer file.Close()
-
-		// make buffer used to detect content type
-		buff := make([]byte, 512)
-		if _, err := file.Read(buff); err != nil {
-			logrus.WithError(err).Error("error reading 512 bytes from file in request")
-			http.Error(w, "unable to read file for mime detection", http.StatusInternalServerError)
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
-		filetype := http.DetectContentType(buff)
-		if filetype != "image/jpeg" && filetype != "image/png" {
-			http.Error(w, "invalid format. only jpeg and png are accepted", http.StatusBadRequest)
-			return
-		}
+		pubkey := r.FormValue("pubkey")
+		signature := r.FormValue("signature")
+		logrus.WithFields(logrus.Fields{"pubkey": pubkey, "signature": signature}).Debug("form values")
 
-		// seek back to beginning to get whole file
-		if _, err := file.Seek(0, io.SeekStart); err != nil {
-			logrus.WithError(err).Error("error seeking to beging of file")
-			http.Error(w, "unable to process the file", http.StatusInternalServerError)
+		if len(pubkeys) > 0 && !pubkeyIsApproved(pubkey, pubkeys) {
+			http.Error(w, "pubkey not approved", http.StatusUnauthorized)
 			return
 		}
 
@@ -71,15 +53,6 @@ func upload(baseDir, domain string, pubkeys []string) http.HandlerFunc {
 		}
 		shasum := sha256.Sum256(buf.Bytes())
 
-		pubkey := r.FormValue("pubkey")
-		signature := r.FormValue("signature")
-		logrus.WithFields(logrus.Fields{"pubkey": pubkey, "signature": signature}).Debug("form values")
-
-		if len(pubkeys) > 0 && !pubkeyIsApproved(pubkey, pubkeys) {
-			http.Error(w, "pubkey not approved", http.StatusUnauthorized)
-			return
-		}
-
 		validSig, err := checkSignature(pubkey, signature, shasum[:])
 		if err != nil {
 			logrus.WithError(err).Error("error checking the signature")
@@ -91,38 +64,10 @@ func upload(baseDir, domain string, pubkeys []string) http.HandlerFunc {
 			return
 		}
 
-		// create directory path to put file
-		directory := createAndGetDirectory(shasum[:])
-		fullDirectory := filepath.Join(baseDir, directory)
-		if err := os.MkdirAll(fullDirectory, os.ModePerm); err != nil {
-			logrus.WithError(err).Error("error creating the directory on filesystem")
-			http.Error(w, "error preparing the file", http.StatusInternalServerError)
-			return
-		}
-
-		// get name and paths to file
-		extension := filepath.Ext(fileHeader.Filename)
-		name := fmt.Sprintf("%s%s", hex.EncodeToString(shasum[:]), extension)
-		filePath := filepath.Join(directory, name)
-		fullPath, err := filepath.Abs(filepath.Join(fullDirectory, name))
-		if err != nil {
-			logrus.WithError(err).Error("error calculating the local path on filesystem")
-			http.Error(w, "error opening the file on filesystem", http.StatusInternalServerError)
-			return
-		}
-
 		// save file to the filesystem
-		dst, err := os.Create(fullPath)
+		filePath, err := saveFileToFilesystem(baseDir, fileHeader.Filename, shasum[:], &buf)
 		if err != nil {
-			logrus.WithError(err).Error("error opening the file on filesystem")
 			http.Error(w, "error opening the file on filesystem", http.StatusInternalServerError)
-			return
-		}
-		defer dst.Close()
-
-		if _, err = io.Copy(dst, &buf); err != nil {
-			logrus.WithError(err).Error("error copying the file to filesystem")
-			http.Error(w, "error copying the file to filesystem", http.StatusInternalServerError)
 			return
 		}
 
@@ -168,4 +113,71 @@ func pubkeyIsApproved(pubkey string, pubkeys []string) bool {
 		}
 	}
 	return false
+}
+
+func getFileFromRequestBody(w http.ResponseWriter, r *http.Request) (multipart.File, *multipart.FileHeader, error) {
+	r.Body = http.MaxBytesReader(w, r.Body, MAX_UPLOAD_SIZE)
+	if err := r.ParseMultipartForm(MAX_UPLOAD_SIZE); err != nil {
+		return nil, nil, errors.New("file too big")
+	}
+
+	file, fileHeader, err := r.FormFile("file")
+	if err != nil {
+		logrus.WithError(err).Error("error getting file from request")
+		return nil, nil, errors.New("file not found in request")
+	}
+	defer file.Close()
+
+	// make buffer used to detect content type
+	buff := make([]byte, 512)
+	if _, err := file.Read(buff); err != nil {
+		logrus.WithError(err).Error("error reading 512 bytes from file in request")
+		return nil, nil, errors.New("unable to read file for mime detection")
+	}
+
+	filetype := http.DetectContentType(buff)
+	if filetype != "image/jpeg" && filetype != "image/png" {
+		return nil, nil, errors.New("invalid format. only jpeg and png are accepted")
+	}
+
+	// seek back to beginning to get whole file
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		logrus.WithError(err).Error("error seeking to beging of file")
+		return nil, nil, errors.New("unable to process the file")
+	}
+
+	return file, fileHeader, nil
+}
+
+func saveFileToFilesystem(baseDir, filename string, shasum []byte, buf *bytes.Buffer) (string, error) {
+	directory := createAndGetDirectory(shasum)
+	fullDirectory := filepath.Join(baseDir, directory)
+	if err := os.MkdirAll(fullDirectory, os.ModePerm); err != nil {
+		logrus.WithError(err).Error("error creating the directory on filesystem")
+		return "", errors.New("error preparing the file")
+	}
+
+	// get name and paths to file
+	extension := filepath.Ext(filename)
+	name := fmt.Sprintf("%s%s", hex.EncodeToString(shasum), extension)
+	filePath := filepath.Join(directory, name)
+	fullPath, err := filepath.Abs(filepath.Join(fullDirectory, name))
+	if err != nil {
+		logrus.WithError(err).Error("error calculating the local path on filesystem")
+		return "", errors.New("error opening the file on filesystem")
+	}
+
+	dst, err := os.Create(fullPath)
+	if err != nil {
+		logrus.WithError(err).Error("error opening the file on filesystem")
+		return "", errors.New("error opening the file on filesystem")
+	}
+	defer dst.Close()
+
+	if _, err = io.Copy(dst, buf); err != nil {
+		logrus.WithError(err).Error("error copying the file to filesystem")
+		return "", errors.New("error copying the file to filesystem")
+	}
+
+	return filePath, nil
 }
