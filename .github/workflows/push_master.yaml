@@ -1,0 +1,9 @@
+name: Push Master
+
+on:
+  push:
+    branches: [ master ]
+
+jobs:
+  golang_lint:
+    uses: ./.github/workflows/golang_lint.yaml
