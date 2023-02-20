@@ -1,10 +1,7 @@
 name: Goreleaser
 
 on:
-  workflow_call:
-    secrets:
-      GITHUB_TOKEN:
-        required: true
+  workflow_call: {}
 
 jobs:
   release:

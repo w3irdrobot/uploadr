@@ -7,5 +7,3 @@ on:
 jobs:
   goreleaser:
     uses: ./.github/workflows/goreleaser.yaml
-    secrets:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
