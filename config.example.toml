@@ -1,0 +1,17 @@
+# the domain of the URLs that will be returned for accessing the uploaded files
+domain = "http://localhost:8080"
+
+# the host the server is running on. commonly this will be just localhost
+# host = "127.0.0.1"
+
+# the host the server is running on.
+# port = 8080
+
+# the root directory files will be put into
+# dir = "./uploads"
+
+# the level of logging the service will output
+# log-level = info
+
+# a list of public keys that are allowed to upload files to this service
+# pubkey = []
